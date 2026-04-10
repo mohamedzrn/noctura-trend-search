@@ -1,0 +1,35 @@
+from rich.console import Console
+from rich.theme import Theme
+
+_theme = Theme(
+    {
+        "info": "cyan",
+        "success": "bold green",
+        "warning": "bold yellow",
+        "error": "bold red",
+        "dim": "dim white",
+        "highlight": "bold magenta",
+    }
+)
+
+console = Console(theme=_theme)
+
+
+def info(msg: str) -> None:
+    console.print(f"[info]ℹ[/info]  {msg}")
+
+
+def success(msg: str) -> None:
+    console.print(f"[success]✔[/success]  {msg}")
+
+
+def warning(msg: str) -> None:
+    console.print(f"[warning]⚠[/warning]  {msg}")
+
+
+def error(msg: str) -> None:
+    console.print(f"[error]✘[/error]  {msg}")
+
+
+def dim(msg: str) -> None:
+    console.print(f"[dim]{msg}[/dim]")
