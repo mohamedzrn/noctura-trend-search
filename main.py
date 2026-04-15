@@ -8,6 +8,7 @@ and get back per-creator niche intelligence powered by Claude.
 Commands
 --------
   start               Start polling your DM inbox for new reels
+  dashboard           Launch the web dashboard (localhost:8080)
   creators            List all tracked creators and their profiles
   profile <username>  Show the niche profile for a specific creator
   bank                Show the global trend data bank (audio, keywords)
@@ -44,6 +45,21 @@ def cmd_start(args) -> None:
         sys.exit(1)
     from instagram.monitor import Monitor
     Monitor().run()
+
+
+def cmd_dashboard(args) -> None:
+    import uvicorn
+    from config import config
+    host = args.host
+    port = args.port
+    console.print(f"[cyan]Dashboard running at http://{host}:{port}[/cyan]  (Ctrl+C to stop)")
+    uvicorn.run(
+        "web.server:app",
+        host=host,
+        port=port,
+        reload=False,
+        log_level="warning",
+    )
 
 
 def cmd_creators(args) -> None:
@@ -235,6 +251,12 @@ def main() -> None:
     # start
     p = subparsers.add_parser("start", help="Start the DM monitor loop")
     p.set_defaults(func=cmd_start)
+
+    # dashboard
+    p = subparsers.add_parser("dashboard", help="Launch web dashboard (localhost:8080)")
+    p.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    p.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
+    p.set_defaults(func=cmd_dashboard)
 
     # creators
     p = subparsers.add_parser("creators", help="List all tracked creators")
