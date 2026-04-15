@@ -3,16 +3,20 @@
 Noctura Trend Search
 --------------------
 Instagram Reel trend bot — send a reel to your bot's DM inbox
-and get back niche intelligence powered by Claude.
+and get back per-creator niche intelligence powered by Claude.
 
 Commands
 --------
-  start     Start polling your DM inbox for new reels
-  report    Print the current niche profile summary
-  trends    List recent trend analyses
+  start               Start polling your DM inbox for new reels
+  creators            List all tracked creators and their profiles
+  profile <username>  Show the niche profile for a specific creator
+  bank                Show the global trend data bank (audio, keywords)
+  trends              List recent trend analyses
+  analyze <url>       Manually analyze a reel by URL (no DM required)
 """
 
 import argparse
+import re
 import sys
 
 from rich.console import Console
@@ -23,7 +27,7 @@ console = Console()
 
 BANNER = """[bold magenta]
   Noctura Trend Search
-  Instagram → Claude → Niche Intelligence
+  Instagram → Claude → Per-Creator Niche Intelligence
 [/bold magenta]"""
 
 
@@ -32,63 +36,71 @@ BANNER = """[bold magenta]
 # ------------------------------------------------------------------
 
 def cmd_start(args) -> None:
-    """Validate config then launch the DM monitor loop."""
     from config import config
-
     try:
         config.validate()
     except EnvironmentError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
         sys.exit(1)
-
     from instagram.monitor import Monitor
-
-    monitor = Monitor()
-    monitor.run()
+    Monitor().run()
 
 
-def cmd_report(args) -> None:
-    """Print the current niche profile."""
-    from config import config
+def cmd_creators(args) -> None:
     from storage.db import Database
     from analysis.niche_builder import NicheBuilder
-
     db = Database()
-    builder = NicheBuilder(db)
-    builder.print_report()
+    NicheBuilder(db).print_creators_overview()
+
+
+def cmd_profile(args) -> None:
+    from storage.db import Database
+    from analysis.niche_builder import NicheBuilder
+    db = Database()
+    username = args.username.lstrip("@")
+    NicheBuilder(db).print_creator_report(username)
+
+
+def cmd_bank(args) -> None:
+    from storage.db import Database
+    from analysis.niche_builder import NicheBuilder
+    db = Database()
+    NicheBuilder(db).print_data_bank()
 
 
 def cmd_trends(args) -> None:
-    """List recent trend analyses in a table."""
     from storage.db import Database
-
     db = Database()
-    analyses = db.get_recent_analyses(limit=args.limit)
+    username = args.creator.lstrip("@") if args.creator else None
+    if username:
+        analyses = db.get_analyses_for_creator(username, limit=args.limit)
+        title = f"Trend Analyses for @{username} (last {len(analyses)})"
+    else:
+        analyses = db.get_recent_analyses(limit=args.limit)
+        title = f"Recent Trend Analyses (last {len(analyses)})"
 
     if not analyses:
         console.print("[yellow]No trend analyses yet. Start the bot and submit some reels.[/yellow]")
         return
 
-    table = Table(title=f"Recent Trend Analyses (last {len(analyses)})", show_header=True, header_style="bold cyan")
-    table.add_column("Reel ID", style="dim", max_width=16)
+    table = Table(title=title, show_header=True, header_style="bold cyan")
+    table.add_column("Creator", style="cyan")
     table.add_column("Niche", style="magenta")
-    table.add_column("Sub-Niche", style="cyan")
-    table.add_column("Audio Score", justify="center")
-    table.add_column("Keywords", max_width=40)
-    table.add_column("Analyzed At", style="dim", max_width=20)
+    table.add_column("Sub-Niche")
+    table.add_column("Audio", justify="center", max_width=12)
+    table.add_column("Keywords", max_width=38)
+    table.add_column("Analyzed At", style="dim", max_width=19)
 
     for a in analyses:
         keywords = a.get("keywords") or []
         kw_str = ", ".join(keywords[:4])
         if len(keywords) > 4:
             kw_str += " …"
-        score = a.get("trending_audio_score") or 0
-        score_str = _audio_score_bar(score)
         table.add_row(
-            str(a.get("reel_id") or "")[:16],
+            f"@{a.get('creator_username') or '—'}",
             a.get("niche") or "—",
             a.get("sub_niche") or "—",
-            score_str,
+            _audio_score_bar(a.get("trending_audio_score") or 0),
             kw_str,
             str(a.get("analyzed_at") or "")[:19],
         )
@@ -98,12 +110,8 @@ def cmd_trends(args) -> None:
 
 
 def cmd_analyze_url(args) -> None:
-    """
-    Manually analyze a reel by its Instagram URL.
-    Useful for testing without the DM loop.
-    """
+    """Manually analyze a reel by URL — no DM required."""
     from config import config
-
     try:
         config.validate()
     except EnvironmentError as exc:
@@ -111,14 +119,15 @@ def cmd_analyze_url(args) -> None:
         sys.exit(1)
 
     from instagram.client import InstagramClient
-    from instagram.extractor import _build_url, _get_audio, _get_caption, _extract_hashtags, _safe_media_dict
+    from instagram.extractor import (
+        _build_url, _get_audio, _get_caption,
+        _extract_hashtags, _safe_media_dict, _extract_creator,
+    )
     from analysis.analyzer import TrendAnalyzer
     from analysis.niche_builder import NicheBuilder
     from storage.db import Database
 
     url: str = args.url
-    # Extract shortcode from URL
-    import re
     match = re.search(r"/(reel|p)/([A-Za-z0-9_-]+)", url)
     if not match:
         console.print(f"[red]Could not parse reel URL:[/red] {url}")
@@ -138,11 +147,17 @@ def cmd_analyze_url(args) -> None:
 
     caption = _get_caption(media)
     audio_name, audio_artist = _get_audio(media)
+    creator = _extract_creator(media)
+    creator_username = creator["username"]
+
+    console.print(f"Original creator: [cyan]@{creator_username}[/cyan]")
 
     metadata = {
         "id": str(media.pk),
         "dm_thread_id": None,
         "reel_url": url,
+        "creator_username": creator_username,
+        "submitted_by": "manual",
         "caption": caption,
         "audio_name": audio_name,
         "audio_artist": audio_artist,
@@ -151,12 +166,13 @@ def cmd_analyze_url(args) -> None:
         "like_count": getattr(media, "like_count", 0) or 0,
         "play_count": getattr(media, "play_count", 0) or 0,
         "duration": getattr(media, "video_duration", 0) or 0,
-        "sender_username": "manual",
         "submitted_at": None,
         "raw_metadata": _safe_media_dict(media),
     }
 
     db = Database()
+    if creator_username != "unknown":
+        db.upsert_creator(creator)
     db.save_reel(metadata)
 
     console.print("Running trend analysis …")
@@ -167,11 +183,16 @@ def cmd_analyze_url(args) -> None:
         console.print("[red]Analysis failed.[/red]")
         sys.exit(1)
 
-    db.save_analysis({**analysis, "reel_id": metadata["id"]})
+    db.save_analysis({**analysis, "reel_id": metadata["id"], "creator_username": creator_username})
 
-    # Pretty-print the analysis
+    if audio_name:
+        db.upsert_audio(audio_name, audio_artist, analysis.get("trending_audio_score") or 0, creator_username)
+    if analysis.get("keywords"):
+        db.upsert_keywords(analysis["keywords"], analysis.get("niche") or "", creator_username)
+
     console.print()
     console.print(Panel(
+        f"[bold]Creator:[/bold] @{creator_username}\n"
         f"[bold]Niche:[/bold] {analysis.get('niche')}\n"
         f"[bold]Sub-niche:[/bold] {analysis.get('sub_niche')}\n"
         f"[bold]Content style:[/bold] {analysis.get('content_style')}\n"
@@ -185,7 +206,7 @@ def cmd_analyze_url(args) -> None:
     ))
 
     builder = NicheBuilder(db)
-    builder.rebuild()
+    builder.rebuild(creator_username)
 
 
 # ------------------------------------------------------------------
@@ -194,9 +215,7 @@ def cmd_analyze_url(args) -> None:
 
 def _audio_score_bar(score: int) -> str:
     score = max(0, min(10, score or 0))
-    filled = "█" * score
-    empty = "░" * (10 - score)
-    return f"{filled}{empty}"
+    return "█" * score + "░" * (10 - score)
 
 
 # ------------------------------------------------------------------
@@ -214,26 +233,32 @@ def main() -> None:
     subparsers.required = True
 
     # start
-    p_start = subparsers.add_parser("start", help="Start the DM monitor loop")
-    p_start.set_defaults(func=cmd_start)
+    p = subparsers.add_parser("start", help="Start the DM monitor loop")
+    p.set_defaults(func=cmd_start)
 
-    # report
-    p_report = subparsers.add_parser("report", help="Print the niche profile summary")
-    p_report.set_defaults(func=cmd_report)
+    # creators
+    p = subparsers.add_parser("creators", help="List all tracked creators")
+    p.set_defaults(func=cmd_creators)
+
+    # profile
+    p = subparsers.add_parser("profile", help="Show niche profile for a creator")
+    p.add_argument("username", help="Instagram username (with or without @)")
+    p.set_defaults(func=cmd_profile)
+
+    # bank
+    p = subparsers.add_parser("bank", help="Show the global trend data bank")
+    p.set_defaults(func=cmd_bank)
 
     # trends
-    p_trends = subparsers.add_parser("trends", help="List recent trend analyses")
-    p_trends.add_argument(
-        "--limit", type=int, default=10, help="Number of analyses to show (default: 10)"
-    )
-    p_trends.set_defaults(func=cmd_trends)
+    p = subparsers.add_parser("trends", help="List recent trend analyses")
+    p.add_argument("--limit", type=int, default=10, help="Number to show (default: 10)")
+    p.add_argument("--creator", type=str, default=None, help="Filter by creator username")
+    p.set_defaults(func=cmd_trends)
 
     # analyze
-    p_analyze = subparsers.add_parser(
-        "analyze", help="Manually analyze a reel by URL (no DM required)"
-    )
-    p_analyze.add_argument("url", help="Instagram reel URL")
-    p_analyze.set_defaults(func=cmd_analyze_url)
+    p = subparsers.add_parser("analyze", help="Manually analyze a reel by URL")
+    p.add_argument("url", help="Instagram reel URL")
+    p.set_defaults(func=cmd_analyze_url)
 
     args = parser.parse_args()
     args.func(args)
