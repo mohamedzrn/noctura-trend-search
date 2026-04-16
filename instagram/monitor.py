@@ -87,9 +87,10 @@ class Monitor:
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
-            # Filter by allowed sender if configured
+            # Filter by whitelist if configured
             sender = _sender_username(msg, thread)
-            if config.ALLOWED_SENDER and sender != config.ALLOWED_SENDER:
+            allowed = config.ALLOWED_SENDERS
+            if allowed and sender.lower() not in allowed:
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
