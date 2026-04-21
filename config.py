@@ -20,6 +20,18 @@ class Config:
             return set()
         return {u.strip().lstrip("@").lower() for u in raw.split(",") if u.strip()}
 
+    # Proxy
+    PROXY_HOST: str = os.getenv("PROXY_HOST", "")
+    PROXY_PORT: str = os.getenv("PROXY_PORT", "823")
+    PROXY_USERNAME: str = os.getenv("PROXY_USERNAME", "")
+    PROXY_PASSWORD: str = os.getenv("PROXY_PASSWORD", "")
+
+    @property
+    def PROXY_URL(self) -> str | None:
+        if self.PROXY_HOST and self.PROXY_USERNAME:
+            return f"http://{self.PROXY_USERNAME}:{self.PROXY_PASSWORD}@{self.PROXY_HOST}:{self.PROXY_PORT}"
+        return None
+
     # Claude
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     CLAUDE_MODEL: str = "claude-opus-4-6"
