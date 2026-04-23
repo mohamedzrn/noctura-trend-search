@@ -17,7 +17,7 @@ from utils.logger import warning
 
 
 # Message item_type values that may carry a reel
-_REEL_TYPES = {"clip", "reel_share", "xma_reel_share", "media_share"}
+_REEL_TYPES = {"clip", "reel_share", "xma_reel_share", "media_share", "xma_clip"}
 
 
 def is_reel_message(msg: DirectMessage) -> bool:
@@ -34,6 +34,9 @@ def extract_reel_metadata(
 
     Returns a dict with both reel data and creator info, or None on failure.
     """
+    if getattr(msg, "item_type", "") == "xma_clip":
+        return _extract_xma_clip_metadata(msg, thread_id, submitted_by)
+
     media: Media | None = _resolve_media(msg)
     if media is None:
         warning(f"Could not resolve media from message {msg.id}")
@@ -138,6 +141,46 @@ def _build_url(media: Media) -> str:
     if code:
         return f"https://www.instagram.com/reel/{code}/"
     return f"https://www.instagram.com/p/{media.pk}/"
+
+
+def _extract_xma_clip_metadata(msg: DirectMessage, thread_id: str, submitted_by: str) -> dict[str, Any] | None:
+    """Handle xma_clip messages — media lives in xma_share (MediaXma), not a full Media object.
+    Returns a stub that _enrich_metadata in the monitor will fill via media_info()."""
+    xma = getattr(msg, "xma_share", None)
+    if xma is None:
+        warning(f"xma_clip message {msg.id} has no xma_share")
+        return None
+
+    url = str(getattr(xma, "video_url", "") or "")
+
+    # Extract numeric media ID from ?id=MEDIA_ID_USER_ID
+    id_match = re.search(r"[?&]id=(\d+)", url)
+    if not id_match:
+        warning(f"Could not extract media ID from xma_clip URL: {url[:120]}")
+        return None
+    media_id = id_match.group(1)
+
+    code_match = re.search(r"/reel/([A-Za-z0-9_-]+)", url)
+    reel_url = f"https://www.instagram.com/reel/{code_match.group(1)}/" if code_match else url
+
+    return {
+        "id": media_id,
+        "dm_thread_id": thread_id,
+        "reel_url": reel_url,
+        "creator_username": "unknown",
+        "submitted_by": submitted_by,
+        "caption": "",
+        "audio_name": "",
+        "audio_artist": "",
+        "hashtags": [],
+        "view_count": 0,
+        "like_count": 0,
+        "play_count": 0,
+        "duration": 0,
+        "submitted_at": None,
+        "raw_metadata": {},
+        "creator": {"username": "unknown"},
+    }
 
 
 def _safe_media_dict(media: Media) -> dict:

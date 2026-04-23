@@ -164,6 +164,49 @@ class Monitor:
         builder = NicheBuilder(self.db)
         builder.rebuild(creator_username)
 
+        # 8. Send analysis results back to the sender via DM
+        self._send_analysis_reply(thread_id, sender, creator_username, metadata, analysis)
+
+    def _send_analysis_reply(
+        self,
+        thread_id: str,
+        sender: str,
+        creator_username: str,
+        metadata: dict,
+        analysis: dict,
+    ) -> None:
+        audio_score = analysis.get("trending_audio_score") or 0
+        audio_bar = "█" * audio_score + "░" * (10 - audio_score)
+        keywords = analysis.get("keywords") or []
+        virality = analysis.get("virality_indicators") or {}
+        audio_line = ""
+        if metadata.get("audio_name"):
+            audio_line = f"\n🎵 Audio: {metadata['audio_name']}"
+            if metadata.get("audio_artist"):
+                audio_line += f" — {metadata['audio_artist']}"
+
+        msg = (
+            f"✅ Reel Analysis — @{creator_username}\n"
+            f"{'─' * 30}\n"
+            f"📌 Niche: {analysis.get('niche', '—')}\n"
+            f"   Sub-niche: {analysis.get('sub_niche', '—')}\n"
+            f"🎨 Style: {analysis.get('content_style', '—')}\n"
+            f"{audio_line}\n"
+            f"🔥 Audio trend score: {audio_bar} {audio_score}/10\n"
+            f"🏷️ Keywords: {', '.join(keywords[:6])}\n"
+            f"{'─' * 30}\n"
+            f"⚡ Hook: {virality.get('hook_strength', '—')}\n"
+            f"📤 Shareability: {virality.get('shareability', '—')}\n"
+            f"{'─' * 30}\n"
+            f"💡 {analysis.get('recommendation', '—')}"
+        )
+
+        try:
+            self.client.raw.direct_send(msg, thread_ids=[thread_id])
+            success(f"Reply sent to @{sender} in thread {thread_id}")
+        except Exception as exc:
+            error(f"Failed to send DM reply to @{sender}: {exc}")
+
     def _enrich_metadata(self, metadata: dict) -> dict:
         """Attempt to pull richer data from media_info API call."""
         try:
