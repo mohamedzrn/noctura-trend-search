@@ -41,15 +41,35 @@ cp .env.example .env
 
 ## Configuration
 
+Copy `.env.example` to `.env` and fill in your values.
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `INSTAGRAM_USERNAME` | Username of the bot Instagram account (the one that receives DMs) |
+| `INSTAGRAM_PASSWORD` | Password for the bot account |
+| `ANTHROPIC_API_KEY` | Your Claude API key — get it from console.anthropic.com |
+
+### Optional
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `INSTAGRAM_USERNAME` | Bot account username | required |
-| `INSTAGRAM_PASSWORD` | Bot account password | required |
-| `ANTHROPIC_API_KEY` | Claude API key | required |
-| `POLL_INTERVAL_SECONDS` | How often to check DMs | `60` |
-| `ALLOWED_SENDER` | Only process reels from this username (blank = everyone) | blank |
-| `SESSION_FILE` | Path to save Instagram session | `session.json` |
+| `ALLOWED_SENDERS` | Comma-separated Instagram usernames allowed to DM reels to the bot (blank = accept from anyone). Example: `user1,user2` | blank |
+| `POLL_INTERVAL_SECONDS` | How often to check DMs (seconds) | `60` |
+| `SESSION_FILE` | Path to save the Instagram session (avoids re-login on restart) | `session.json` |
 | `DB_PATH` | SQLite database file | `trends.db` |
+
+### Proxy (optional)
+
+Required if Instagram blocks direct connections from your server. Tested with [DataImpulse](https://dataimpulse.com) residential proxies.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PROXY_HOST` | Proxy hostname | blank |
+| `PROXY_PORT` | Proxy port | `823` |
+| `PROXY_USERNAME` | Proxy username | blank |
+| `PROXY_PASSWORD` | Proxy password | blank |
 
 ## What Claude extracts per reel
 
