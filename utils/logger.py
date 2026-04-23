@@ -12,23 +12,23 @@ _theme = Theme(
     }
 )
 
-console = Console(theme=_theme)
+console = Console(theme=_theme, highlight=False, legacy_windows=False)
 
 
 def info(msg: str) -> None:
-    console.print(f"[info]ℹ[/info]  {msg}")
+    console.print(f"[info]>[/info]  {msg}")
 
 
 def success(msg: str) -> None:
-    console.print(f"[success]✔[/success]  {msg}")
+    console.print(f"[success]+[/success]  {msg}")
 
 
 def warning(msg: str) -> None:
-    console.print(f"[warning]⚠[/warning]  {msg}")
+    console.print(f"[warning]![/warning]  {msg}")
 
 
 def error(msg: str) -> None:
-    console.print(f"[error]✘[/error]  {msg}")
+    console.print(f"[error]x[/error]  {msg}")
 
 
 def dim(msg: str) -> None:

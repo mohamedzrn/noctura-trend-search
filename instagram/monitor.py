@@ -87,9 +87,10 @@ class Monitor:
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
-            # Filter by allowed sender if configured
+            # Filter by whitelist if configured
             sender = _sender_username(msg, thread)
-            if config.ALLOWED_SENDER and sender != config.ALLOWED_SENDER:
+            allowed = config.ALLOWED_SENDERS
+            if allowed and sender.lower() not in allowed:
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
@@ -101,16 +102,25 @@ class Monitor:
         from analysis.analyzer import TrendAnalyzer
         from analysis.niche_builder import NicheBuilder
 
-        # 1. Extract metadata
+        # 1. Extract metadata (includes creator identity)
         metadata = extract_reel_metadata(msg, thread_id, sender)
         if metadata is None:
             warning(f"Could not extract reel from message {msg.id}. Skipping.")
             return
 
-        # 2. Try to enrich with full media info from the API
+        # 2. Enrich with full media info from the API
         metadata = self._enrich_metadata(metadata)
 
-        # 3. Persist raw reel
+        creator = metadata.pop("creator", {})
+        creator_username = metadata.get("creator_username") or "unknown"
+
+        info(f"Reel from creator @{creator_username} (forwarded by @{sender})")
+
+        # 3. Upsert creator into the data bank
+        if creator.get("username") and creator["username"] != "unknown":
+            self.db.upsert_creator(creator)
+
+        # 4. Persist raw reel
         inserted = self.db.save_reel(metadata)
         if not inserted:
             dim(f"Reel {metadata['id']} already in DB. Skipping analysis.")
@@ -118,31 +128,54 @@ class Monitor:
 
         info(f"Reel {metadata['id']} saved. Running trend analysis …")
 
-        # 4. Analyse with Claude
+        # 5. Analyse with Claude
         analyzer = TrendAnalyzer()
         analysis = analyzer.analyze(metadata)
         if analysis is None:
             error("Analysis returned None. Skipping.")
             return
 
-        self.db.save_analysis({**analysis, "reel_id": metadata["id"]})
+        self.db.save_analysis({
+            **analysis,
+            "reel_id": metadata["id"],
+            "creator_username": creator_username,
+        })
+
+        # 6. Feed audio + keywords into the data banks
+        audio_name = metadata.get("audio_name") or ""
+        if audio_name:
+            self.db.upsert_audio(
+                audio_name,
+                metadata.get("audio_artist") or "",
+                analysis.get("trending_audio_score") or 0,
+                creator_username,
+            )
+        keywords = analysis.get("keywords") or []
+        if keywords:
+            self.db.upsert_keywords(keywords, analysis.get("niche") or "", creator_username)
+
         success(
-            f"Analysis complete — Niche: {analysis.get('niche', 'unknown')} | "
-            f"Keywords: {', '.join((analysis.get('keywords') or [])[:3])}"
+            f"Analysis complete — @{creator_username} | "
+            f"Niche: {analysis.get('niche', 'unknown')} | "
+            f"Keywords: {', '.join(keywords[:3])}"
         )
 
-        # 5. Rebuild niche profile
+        # 7. Rebuild per-creator niche profile
         builder = NicheBuilder(self.db)
-        builder.rebuild()
+        builder.rebuild(creator_username)
 
     def _enrich_metadata(self, metadata: dict) -> dict:
         """Attempt to pull richer data from media_info API call."""
         try:
             media = self.client.raw.media_info(metadata["id"])
             if media:
-                from instagram.extractor import _get_audio, _get_caption, _extract_hashtags, _build_url, _safe_media_dict
+                from instagram.extractor import (
+                    _get_audio, _get_caption, _extract_hashtags,
+                    _build_url, _safe_media_dict, _extract_creator,
+                )
                 caption = _get_caption(media)
                 audio_name, audio_artist = _get_audio(media)
+                creator = _extract_creator(media)
                 metadata.update(
                     {
                         "reel_url": _build_url(media),
@@ -155,6 +188,8 @@ class Monitor:
                         "play_count": getattr(media, "play_count", None) or metadata["play_count"],
                         "duration": getattr(media, "video_duration", None) or metadata["duration"],
                         "raw_metadata": _safe_media_dict(media),
+                        "creator": creator,
+                        "creator_username": creator["username"],
                     }
                 )
         except Exception as exc:

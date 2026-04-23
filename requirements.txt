@@ -1,5 +1,12 @@
-instagrapi==2.1.3
+instagrapi>=2.3.0
 anthropic>=0.40.0
 python-dotenv>=1.0.0
 rich>=13.0.0
 apscheduler>=3.10.4
+PySocks>=1.7.1
+pycryptodomex>=3.21.0
+Pillow>=8.1.1
+fastapi==0.115.5
+starlette==0.41.3
+uvicorn>=0.20.0
+jinja2>=3.1.0

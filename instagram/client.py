@@ -27,6 +27,9 @@ class InstagramClient:
         self._cl.delay_range = [1, 3]  # polite request pacing
         self._session_path = Path(config.SESSION_FILE)
         self._logged_in = False
+        if config.PROXY_URL:
+            self._cl.set_proxy(config.PROXY_URL)
+            info(f"Proxy configured: {config.PROXY_HOST}:{config.PROXY_PORT}")
 
     # ------------------------------------------------------------------
     # Auth
