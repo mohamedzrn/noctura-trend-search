@@ -129,13 +129,14 @@ class Monitor:
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
-            # Wrong content type (story, link, etc.)
-            if is_wrong_type_message(msg):
-                self._send(thread_id, "That doesn't look like a reel — send me a reel link or forward one directly from your feed.")
+            # Unsupported user-initiated content — respond and skip
+            item_type = getattr(msg, "item_type", "") or ""
+            if is_wrong_type_message(msg) or item_type in {"text", "story_share", "felix_share", "voice_media"}:
+                self._send(thread_id, "That's not supported yet — forward reels and/or photos only please.")
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
-            # Unsupported but also not "wrong" (text, likes, system) — silently skip
+            # Truly silent system messages (likes, action_log) — skip without reply
             if not is_supported_message(msg):
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
@@ -189,7 +190,7 @@ class Monitor:
         prior_count = self.db.get_sender_reel_count(sender) - 1  # -1 since we just saved
         self._session_counts[sender] += 1
         session_count = self._session_counts[sender]
-        ack = _build_ack(prior_count, session_count, creator_username, is_new_creator)
+        ack = _build_ack(prior_count, session_count, creator_username, is_new_creator, content_type)
         self._send(thread_id, ack)
 
         # 6. Analyse
@@ -288,14 +289,15 @@ class Monitor:
 # Message builder
 # ------------------------------------------------------------------
 
-def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown", is_new_creator: bool = False) -> str:
+def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown", is_new_creator: bool = False, content_type: str = "reel") -> str:
+    label = {"reel": "Reel", "carousel": "Carousel", "photo": "Photo"}.get(content_type, "Content")
     if prior_count == 0:
         return "Logged. I'll start building your content profile from here — keep sending reels as you come across them and I'll do the rest."
     if session_count > 0 and session_count % 5 == 0:
         return f"Logged {session_count} reels. Your profile is updating."
     if is_new_creator:
         return f"New creator logged — @{creator_username} added to your profile."
-    return f"Reel from @{creator_username} has been stored."
+    return f"{label} from @{creator_username} has been stored."
 
 
 # ------------------------------------------------------------------
