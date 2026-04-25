@@ -184,7 +184,7 @@ class Monitor:
         prior_count = self.db.get_sender_reel_count(sender) - 1  # -1 since we just saved
         self._session_counts[sender] += 1
         session_count = self._session_counts[sender]
-        ack = _build_ack(prior_count, session_count)
+        ack = _build_ack(prior_count, session_count, creator_username)
         self._send(thread_id, ack)
 
         # 6. Analyse
@@ -283,12 +283,12 @@ class Monitor:
 # Message builder
 # ------------------------------------------------------------------
 
-def _build_ack(prior_count: int, session_count: int) -> str:
+def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown") -> str:
     if prior_count == 0:
         return "Logged. I'll start building your content profile from here — keep sending reels as you come across them and I'll do the rest."
     if session_count > 0 and session_count % 5 == 0:
         return f"Logged {session_count} reels. Your profile is updating."
-    return "Got it."
+    return f"Reel from @{creator_username} has been stored."
 
 
 # ------------------------------------------------------------------
