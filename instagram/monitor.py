@@ -121,6 +121,12 @@ class Monitor:
                 continue
 
             sender = _sender_username(msg, thread)
+
+            # Fallback: skip if sender is the bot account
+            if sender.lower() == config.INSTAGRAM_USERNAME.lower():
+                self.db.mark_message_processed(msg_id, thread_id)
+                continue
+
             allowed = config.ALLOWED_SENDERS
 
             # Not on whitelist
