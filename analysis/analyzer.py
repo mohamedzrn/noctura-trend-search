@@ -1,8 +1,6 @@
 """
 Claude-powered trend analyzer.
-
-Takes raw reel metadata and returns structured trend intelligence.
-Uses prompt caching for the system prompt to reduce token cost.
+Branches analysis prompt based on content type: reel, carousel, or photo.
 """
 
 from __future__ import annotations
@@ -17,36 +15,65 @@ from config import config
 from utils.logger import error, warning
 
 _SYSTEM_PROMPT = """\
-You are a social media trend analyst specializing in Instagram Reels and short-form video content.
-Your job is to analyze reel metadata and extract actionable trend intelligence.
+You are a social media content analyst. You analyze Instagram content metadata \
+and extract structured intelligence about niches, trends, and creator style.
 
-Given metadata about an Instagram Reel (caption, audio, hashtags, engagement counts), you will:
-1. Identify the primary content niche and sub-niche.
-2. Extract specific trend signals — what makes this reel timely or viral-ready.
-3. Score the audio's trending potential (1-10, where 10 = viral audio everyone is using).
-4. Identify virality indicators: hook strength, shareability, engagement pattern.
-5. Extract 5-10 content keywords that define this reel's niche.
-6. Explain how this reel fits or shapes a content niche strategy.
-7. Give one actionable recommendation for someone building content in this niche.
+ALWAYS respond with valid JSON only. No markdown fences, no preamble.
 
-ALWAYS respond with valid JSON only. No markdown fences, no preamble, no explanation outside the JSON.
-
-JSON schema:
+JSON schema (all fields required):
 {
-  "niche": "string — primary niche (e.g. 'fitness', 'personal finance', 'aesthetic lifestyle')",
-  "sub_niche": "string — more specific category",
-  "trend_signals": ["array of strings — specific trend signals observed"],
-  "content_style": "string — describe the content style/format",
-  "trending_audio_score": "integer 1-10",
+  "niche": "string — primary niche",
+  "sub_niche": "string — specific sub-category",
+  "content_style": "string — format and style description",
+  "trend_signals": ["array of strings"],
+  "trending_audio_score": "integer 1-10 (reels only, else 0)",
   "virality_indicators": {
-    "hook_strength": "string — weak / moderate / strong + brief reason",
-    "engagement_pattern": "string — what type of engagement this likely drives",
-    "shareability": "string — low / medium / high + brief reason"
+    "hook_strength": "string",
+    "engagement_pattern": "string",
+    "shareability": "string"
   },
-  "keywords": ["array of 5-10 keyword strings"],
-  "niche_fit": "string — how this reel defines or reinforces a niche",
-  "recommendation": "string — one concrete content creation tip based on this reel"
+  "keywords": ["5-10 keyword strings"],
+  "niche_fit": "string",
+  "recommendation": "string"
 }
+"""
+
+_REEL_PROMPT_TEMPLATE = """\
+Analyze this Instagram Reel:
+
+Caption: {caption}
+Hashtags: {hashtags}
+Audio: {audio}
+Views: {views}
+Likes: {likes}
+Duration: {duration}s
+Creator: @{creator}
+
+Focus on: niche, audio trend potential (score 1-10), content style, trend signals, keywords.
+"""
+
+_CAROUSEL_PROMPT_TEMPLATE = """\
+Analyze this Instagram Carousel post:
+
+Caption: {caption}
+Hashtags: {hashtags}
+Likes: {likes}
+Creator: @{creator}
+
+Focus on: niche, educational format preference, visual structure, caption style, keywords.
+Set trending_audio_score to 0.
+"""
+
+_PHOTO_PROMPT_TEMPLATE = """\
+Analyze this Instagram photo post:
+
+Caption: {caption}
+Hashtags: {hashtags}
+Likes: {likes}
+Creator: @{creator}
+
+Focus on: niche, aesthetic style, visual taste, caption style the creator admires, keywords.
+Set trending_audio_score to 0.
 """
 
 
@@ -54,20 +81,13 @@ class TrendAnalyzer:
     def __init__(self) -> None:
         self._client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-    def analyze(self, reel: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Analyze a reel's metadata with Claude.
-        Returns parsed analysis dict, or None on failure.
-        """
-        prompt = _build_user_prompt(reel)
-        raw_response = self._call_claude(prompt)
-        if raw_response is None:
+    def analyze(self, media: dict[str, Any]) -> dict[str, Any] | None:
+        content_type = media.get("content_type", "reel")
+        prompt = _build_prompt(media, content_type)
+        raw = self._call_claude(prompt)
+        if raw is None:
             return None
-        return _parse_response(raw_response, reel["id"])
-
-    # ------------------------------------------------------------------
-    # Claude API call with prompt caching
-    # ------------------------------------------------------------------
+        return _parse_response(raw, media["id"])
 
     def _call_claude(self, user_prompt: str, retries: int = 3) -> str | None:
         for attempt in range(retries):
@@ -87,7 +107,7 @@ class TrendAnalyzer:
                 return response.content[0].text
             except anthropic.RateLimitError:
                 wait = 2 ** attempt * 5
-                warning(f"Rate limited by Claude API. Waiting {wait}s …")
+                warning(f"Rate limited. Waiting {wait}s …")
                 time.sleep(wait)
             except anthropic.APIError as exc:
                 error(f"Claude API error (attempt {attempt + 1}): {exc}")
@@ -100,34 +120,47 @@ class TrendAnalyzer:
 # Helpers
 # ------------------------------------------------------------------
 
-def _build_user_prompt(reel: dict[str, Any]) -> str:
-    hashtags_str = " ".join(f"#{h}" for h in (reel.get("hashtags") or []))
-    audio_line = ""
-    if reel.get("audio_name"):
-        audio_line = f"Audio: \"{reel['audio_name']}\""
-        if reel.get("audio_artist"):
-            audio_line += f" by {reel['audio_artist']}"
-    else:
-        audio_line = "Audio: (unknown / original audio)"
+def _build_prompt(media: dict[str, Any], content_type: str) -> str:
+    hashtags = " ".join(f"#{h}" for h in (media.get("hashtags") or []))
+    caption = media.get("caption") or "(no caption)"
+    likes = f"{media.get('like_count') or 0:,}"
+    creator = media.get("creator_username") or "unknown"
 
-    lines = [
-        "Analyze this Instagram Reel:",
-        "",
-        f"Caption: {reel.get('caption') or '(no caption)'}",
-        f"Hashtags: {hashtags_str or '(none)'}",
-        audio_line,
-        f"View count: {reel.get('view_count') or 0:,}",
-        f"Like count: {reel.get('like_count') or 0:,}",
-        f"Play count: {reel.get('play_count') or 0:,}",
-        f"Duration: {reel.get('duration') or 0}s",
-        f"Posted by: @{reel.get('sender_username') or 'unknown'}",
-    ]
-    return "\n".join(lines)
+    if content_type == "reel":
+        audio = "(unknown / original audio)"
+        if media.get("audio_name"):
+            audio = f'"{media["audio_name"]}"'
+            if media.get("audio_artist"):
+                audio += f' by {media["audio_artist"]}'
+        return _REEL_PROMPT_TEMPLATE.format(
+            caption=caption,
+            hashtags=hashtags or "(none)",
+            audio=audio,
+            views=f"{media.get('view_count') or 0:,}",
+            likes=likes,
+            duration=media.get("duration") or 0,
+            creator=creator,
+        )
+
+    if content_type == "carousel":
+        return _CAROUSEL_PROMPT_TEMPLATE.format(
+            caption=caption,
+            hashtags=hashtags or "(none)",
+            likes=likes,
+            creator=creator,
+        )
+
+    # photo
+    return _PHOTO_PROMPT_TEMPLATE.format(
+        caption=caption,
+        hashtags=hashtags or "(none)",
+        likes=likes,
+        creator=creator,
+    )
 
 
-def _parse_response(raw: str, reel_id: str) -> dict[str, Any] | None:
+def _parse_response(raw: str, media_id: str) -> dict[str, Any] | None:
     raw = raw.strip()
-    # Strip accidental markdown fences
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -135,11 +168,9 @@ def _parse_response(raw: str, reel_id: str) -> dict[str, Any] | None:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        error(f"Failed to parse Claude response as JSON for reel {reel_id}: {exc}")
-        error(f"Raw response: {raw[:200]}")
+        error(f"Failed to parse Claude response for {media_id}: {exc}")
         return None
 
-    # Normalise types
     try:
         data["trending_audio_score"] = int(data.get("trending_audio_score") or 0)
     except (ValueError, TypeError):

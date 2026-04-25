@@ -1,9 +1,5 @@
 """
-Reel metadata extractor.
-
-Given a DirectMessage object that contains a reel, extracts everything
-useful: audio, hashtags, engagement counts, caption, URL — and importantly,
-the original creator's Instagram username and profile info.
+Media extractor — handles reels, carousels, and static posts forwarded via DM.
 """
 
 from __future__ import annotations
@@ -16,26 +12,68 @@ from instagrapi.types import DirectMessage, Media
 from utils.logger import warning
 
 
-# Message item_type values that may carry a reel
-_REEL_TYPES = {"clip", "reel_share", "xma_reel_share", "media_share", "xma_clip"}
+_REEL_TYPES   = {"clip", "reel_share", "xma_reel_share", "xma_clip"}
+_SHARE_TYPES  = {"media_share"}
+_IGNORE_TYPES = {"like", "action_log", "story_share", "raven_media", "felix_share", "text"}
+
+
+def get_content_type(msg: DirectMessage) -> str | None:
+    """
+    Returns 'reel', 'carousel', 'photo', or None.
+    None means unsupported / should be ignored or flagged.
+    """
+    item_type = getattr(msg, "item_type", "") or ""
+
+    if item_type in _REEL_TYPES:
+        return "reel"
+
+    if item_type in _SHARE_TYPES:
+        media = _resolve_media(msg)
+        if media is None:
+            return None
+        media_type = getattr(media, "media_type", None)
+        if media_type == 8:
+            return "carousel"
+        if media_type == 1:
+            return "photo"
+        if media_type == 2:
+            return "reel"
+
+    return None
+
+
+def is_supported_message(msg: DirectMessage) -> bool:
+    return get_content_type(msg) is not None
 
 
 def is_reel_message(msg: DirectMessage) -> bool:
-    return getattr(msg, "item_type", "") in _REEL_TYPES
+    """Legacy alias — kept for compatibility."""
+    return is_supported_message(msg)
+
+
+def is_wrong_type_message(msg: DirectMessage) -> bool:
+    """True when the sender clearly sent something but it's not a supported type."""
+    item_type = getattr(msg, "item_type", "") or ""
+    return item_type not in _IGNORE_TYPES and item_type != "" and get_content_type(msg) is None
 
 
 def extract_reel_metadata(
     msg: DirectMessage,
     thread_id: str,
-    submitted_by: str,  # username of whoever forwarded the reel to the bot
+    submitted_by: str,
 ) -> dict[str, Any] | None:
     """
-    Extract structured metadata from a DM message that contains a reel.
-
-    Returns a dict with both reel data and creator info, or None on failure.
+    Extract metadata from any supported DM media message.
+    Includes a 'content_type' key ('reel', 'carousel', 'photo') for the analyzer.
     """
-    if getattr(msg, "item_type", "") == "xma_clip":
+    item_type = getattr(msg, "item_type", "") or ""
+
+    if item_type == "xma_clip":
         return _extract_xma_clip_metadata(msg, thread_id, submitted_by)
+
+    content_type = get_content_type(msg)
+    if content_type is None:
+        return None
 
     media: Media | None = _resolve_media(msg)
     if media is None:
@@ -44,12 +82,12 @@ def extract_reel_metadata(
 
     caption = _get_caption(media)
     hashtags = _extract_hashtags(caption)
-    audio_name, audio_artist = _get_audio(media)
+    audio_name, audio_artist = _get_audio(media) if content_type == "reel" else ("", "")
     creator = _extract_creator(media)
 
     return {
-        # Reel fields
         "id": str(media.pk),
+        "content_type": content_type,
         "dm_thread_id": thread_id,
         "reel_url": _build_url(media),
         "creator_username": creator["username"],
@@ -62,15 +100,13 @@ def extract_reel_metadata(
         "like_count": getattr(media, "like_count", None) or 0,
         "play_count": getattr(media, "play_count", None) or 0,
         "duration": getattr(media, "video_duration", None) or 0,
-        "submitted_at": None,  # filled by DB layer
+        "submitted_at": None,
         "raw_metadata": _safe_media_dict(media),
-        # Creator fields (used to upsert into creators table)
         "creator": creator,
     }
 
 
 def extract_creator_from_media(media: Media) -> dict[str, Any]:
-    """Public helper — pull creator info from any Media object."""
     return _extract_creator(media)
 
 
@@ -87,7 +123,6 @@ def _resolve_media(msg: DirectMessage) -> Media | None:
 
 
 def _extract_creator(media: Media) -> dict[str, Any]:
-    """Extract the original poster's identity from the media object."""
     user = getattr(media, "user", None)
     if user is None:
         return {
@@ -111,8 +146,7 @@ def _extract_creator(media: Media) -> dict[str, Any]:
 
 
 def _get_caption(media: Media) -> str:
-    cap = getattr(media, "caption_text", None) or ""
-    return cap.strip()
+    return (getattr(media, "caption_text", None) or "").strip()
 
 
 def _extract_hashtags(caption: str) -> list[str]:
@@ -139,21 +173,17 @@ def _get_audio(media: Media) -> tuple[str, str]:
 def _build_url(media: Media) -> str:
     code = getattr(media, "code", None)
     if code:
-        return f"https://www.instagram.com/reel/{code}/"
+        return f"https://www.instagram.com/p/{code}/"
     return f"https://www.instagram.com/p/{media.pk}/"
 
 
 def _extract_xma_clip_metadata(msg: DirectMessage, thread_id: str, submitted_by: str) -> dict[str, Any] | None:
-    """Handle xma_clip messages — media lives in xma_share (MediaXma), not a full Media object.
-    Returns a stub that _enrich_metadata in the monitor will fill via media_info()."""
     xma = getattr(msg, "xma_share", None)
     if xma is None:
         warning(f"xma_clip message {msg.id} has no xma_share")
         return None
 
     url = str(getattr(xma, "video_url", "") or "")
-
-    # Extract numeric media ID from ?id=MEDIA_ID_USER_ID
     id_match = re.search(r"[?&]id=(\d+)", url)
     if not id_match:
         warning(f"Could not extract media ID from xma_clip URL: {url[:120]}")
@@ -165,6 +195,7 @@ def _extract_xma_clip_metadata(msg: DirectMessage, thread_id: str, submitted_by:
 
     return {
         "id": media_id,
+        "content_type": "reel",
         "dm_thread_id": thread_id,
         "reel_url": reel_url,
         "creator_username": "unknown",
