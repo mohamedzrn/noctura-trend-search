@@ -181,6 +181,10 @@ class Monitor:
             dim(f"Media {metadata['id']} already in DB.")
             return
 
+        # 4b. Sync to Notion
+        from notion.sync import NotionSync
+        NotionSync().sync_reel(metadata)
+
         # 5. Send context-aware acknowledgment
         prior_count = self.db.get_sender_reel_count(sender) - 1  # -1 since we just saved
         self._session_counts[sender] += 1

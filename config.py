@@ -36,6 +36,10 @@ class Config:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     CLAUDE_MODEL: str = "claude-opus-4-6"
 
+    # Notion
+    NOTION_TOKEN: str = os.getenv("NOTION_TOKEN", "")
+    NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
+
     # Storage
     DB_PATH: str = os.getenv("DB_PATH", "trends.db")
 
