@@ -43,11 +43,11 @@ def _build_properties(metadata: dict[str, Any]) -> dict:
     if metadata.get("audio_artist"):
         audio += f" — {metadata['audio_artist']}"
 
+    creator = metadata.get("creator_username") or "unknown"
     return {
-        "Reel URL": {
-            "title": [{"text": {"content": metadata.get("reel_url") or ""}}]
-        },
-        "Creator": _rich_text(metadata.get("creator_username") or ""),
+        "Name": {"title": [{"text": {"content": f"@{creator}"}}]},
+        "Reel URL": {"url": metadata.get("reel_url") or None},
+        "Creator": _rich_text(creator),
         "Caption": _rich_text((metadata.get("caption") or "")[:2000]),
         "Hashtags": _rich_text(hashtags[:2000]),
         "Audio": _rich_text(audio),
