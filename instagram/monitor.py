@@ -175,6 +175,7 @@ class Monitor:
             self.db.upsert_creator(creator)
 
         # 4. Save
+        is_new_creator = self.db.get_creator_reel_count(creator_username) == 0
         inserted = self.db.save_reel(metadata)
         if not inserted:
             dim(f"Media {metadata['id']} already in DB.")
@@ -184,7 +185,7 @@ class Monitor:
         prior_count = self.db.get_sender_reel_count(sender) - 1  # -1 since we just saved
         self._session_counts[sender] += 1
         session_count = self._session_counts[sender]
-        ack = _build_ack(prior_count, session_count, creator_username)
+        ack = _build_ack(prior_count, session_count, creator_username, is_new_creator)
         self._send(thread_id, ack)
 
         # 6. Analyse
@@ -283,11 +284,13 @@ class Monitor:
 # Message builder
 # ------------------------------------------------------------------
 
-def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown") -> str:
+def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown", is_new_creator: bool = False) -> str:
     if prior_count == 0:
         return "Logged. I'll start building your content profile from here — keep sending reels as you come across them and I'll do the rest."
     if session_count > 0 and session_count % 5 == 0:
         return f"Logged {session_count} reels. Your profile is updating."
+    if is_new_creator:
+        return f"New creator logged — @{creator_username} added to your profile."
     return f"Reel from @{creator_username} has been stored."
 
 

@@ -230,6 +230,12 @@ class Database:
         ).fetchone()
         return row[0] if row else 0
 
+    def get_creator_reel_count(self, creator_username: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM reels WHERE creator_username = ?", (creator_username,)
+        ).fetchone()
+        return row[0] if row else 0
+
     def reel_exists(self, reel_id: str) -> bool:
         row = self._conn.execute(
             "SELECT 1 FROM reels WHERE id = ?", (reel_id,)
