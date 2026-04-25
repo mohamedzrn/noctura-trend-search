@@ -4,7 +4,6 @@ Syncs logged reels to a Notion database.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -66,7 +65,6 @@ def _build_properties(metadata: dict[str, Any]) -> dict:
         "Plays":        {"number": metadata.get("play_count") or 0},
         "Duration (s)": {"number": metadata.get("duration") or 0},
         "Submitted By": _rich_text(metadata.get("submitted_by") or ""),
-        "Logged At":    {"date": {"start": datetime.now(timezone.utc).isoformat()}},
     }
 
 
