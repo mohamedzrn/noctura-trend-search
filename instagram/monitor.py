@@ -16,6 +16,7 @@ from config import config
 from instagram.client import InstagramClient
 from instagram.extractor import (
     extract_reel_metadata,
+    extract_story_metadata,
     get_content_type,
     is_supported_message,
     is_wrong_type_message,
@@ -135,9 +136,17 @@ class Monitor:
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
-            # Unsupported user-initiated content — respond and skip
+            # Story share — handle separately (download before expiry)
             item_type = getattr(msg, "item_type", "") or ""
-            if is_wrong_type_message(msg) or item_type in {"text", "story_share", "felix_share", "voice_media"}:
+            if item_type == "story_share":
+                info(f"Story from @{sender} in thread {thread_id}")
+                self._handle_story_message(msg, thread_id, sender)
+                self.db.mark_message_processed(msg_id, thread_id)
+                found = True
+                continue
+
+            # Unsupported user-initiated content — respond and skip
+            if is_wrong_type_message(msg) or item_type in {"text", "felix_share", "voice_media"}:
                 self._send(thread_id, "That's not supported yet — forward reels and/or photos only please.")
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
@@ -239,6 +248,47 @@ class Monitor:
         # 9. Rebuild profile
         NicheBuilder(self.db).rebuild(creator_username)
 
+    def _handle_story_message(self, msg, thread_id: str, sender: str) -> None:
+        import os
+        import tempfile
+        from notion.sync import NotionSync
+
+        metadata = extract_story_metadata(msg, thread_id, sender)
+        if metadata is None:
+            warning(f"Could not extract story from message {msg.id}")
+            return
+
+        creator = metadata.pop("creator", {})
+        creator_username = metadata.get("creator_username") or "unknown"
+
+        if creator.get("username") and creator["username"] != "unknown":
+            self.db.upsert_creator(creator)
+
+        inserted = self.db.save_reel(metadata)
+        if not inserted:
+            dim(f"Story {metadata['id']} already in DB.")
+            return
+
+        # Try to download story media before it expires
+        local_path = ""
+        story_id = metadata["id"]
+        try:
+            media_dir = os.path.join(os.path.dirname(__file__), "..", "media", "stories")
+            os.makedirs(media_dir, exist_ok=True)
+            downloaded = self.client.raw.story_download(int(story_id), folder=media_dir)
+            if downloaded:
+                local_path = str(downloaded)
+                success(f"Story media saved: {local_path}")
+        except Exception as exc:
+            warning(f"Could not download story {story_id}: {exc}")
+
+        # Sync to Notion with local path for reference
+        metadata["local_path"] = local_path
+        NotionSync().sync_story(metadata)
+
+        self._send(thread_id, "Story saved.")
+        success(f"Story logged — @{sender} | @{creator_username}")
+
     def _enrich_metadata(self, metadata: dict) -> dict:
         try:
             media = self.client.raw.media_info(metadata["id"])
@@ -257,6 +307,7 @@ class Monitor:
                     content_type = "photo"
                 else:
                     content_type = metadata.get("content_type", "reel")
+                from instagram.extractor import _get_thumbnail_url
                 metadata.update({
                     "content_type": content_type,
                     "reel_url": _build_url(media),
@@ -268,6 +319,7 @@ class Monitor:
                     "like_count": getattr(media, "like_count", None) or metadata["like_count"],
                     "play_count": getattr(media, "play_count", None) or metadata["play_count"],
                     "duration": getattr(media, "video_duration", None) or metadata["duration"],
+                    "thumbnail_url": _get_thumbnail_url(media) or metadata.get("thumbnail_url", ""),
                     "raw_metadata": _safe_media_dict(media),
                     "creator": creator,
                     "creator_username": creator["username"],
