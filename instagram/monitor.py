@@ -138,7 +138,7 @@ class Monitor:
 
             # Story share — handle separately (download before expiry)
             item_type = getattr(msg, "item_type", "") or ""
-            if item_type == "story_share":
+            if item_type in {"story_share", "xma_story_share"}:
                 info(f"Story from @{sender} in thread {thread_id}")
                 self._handle_story_message(msg, thread_id, sender)
                 self.db.mark_message_processed(msg_id, thread_id)
@@ -291,7 +291,11 @@ class Monitor:
 
     def _enrich_metadata(self, metadata: dict) -> dict:
         try:
-            media = self.client.raw.media_info(metadata["id"])
+            media_id = metadata["id"]
+            if not str(media_id).isdigit():
+                media_id = str(self.client.raw.media_pk_from_code(media_id))
+                metadata["id"] = media_id
+            media = self.client.raw.media_info(media_id)
             if media:
                 from instagram.extractor import (
                     _get_audio, _get_caption, _extract_hashtags,

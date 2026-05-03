@@ -13,8 +13,8 @@ from utils.logger import warning
 
 
 _REEL_TYPES   = {"clip", "reel_share", "xma_reel_share", "xma_clip"}
-_SHARE_TYPES  = {"media_share"}
-_STORY_TYPES  = {"story_share"}
+_SHARE_TYPES  = {"media_share", "xma_media_share"}
+_STORY_TYPES  = {"story_share", "xma_story_share"}
 _IGNORE_TYPES = {"like", "action_log", "raven_media", "felix_share", "text"}
 
 
@@ -30,6 +30,9 @@ def get_content_type(msg: DirectMessage) -> str | None:
 
     if item_type in _STORY_TYPES:
         return "story"
+
+    if item_type == "xma_media_share":
+        return "carousel"  # best guess; _enrich_metadata will correct
 
     if item_type in _SHARE_TYPES:
         media = _resolve_media(msg)
@@ -66,8 +69,33 @@ def extract_story_metadata(
     thread_id: str,
     submitted_by: str,
 ) -> dict[str, Any] | None:
-    """Extract metadata from a story_share DM message."""
+    """Extract metadata from a story_share or xma_story_share DM message."""
+    item_type = getattr(msg, "item_type", "") or ""
     story = getattr(msg, "story_share", None)
+
+    # xma_story_share has no accessible story object — return a stub
+    if story is None and item_type == "xma_story_share":
+        return {
+            "id": str(msg.id),
+            "content_type": "story",
+            "dm_thread_id": thread_id,
+            "reel_url": None,
+            "creator_username": "unknown",
+            "submitted_by": submitted_by,
+            "caption": "",
+            "audio_name": "",
+            "audio_artist": "",
+            "hashtags": [],
+            "view_count": 0,
+            "like_count": 0,
+            "play_count": 0,
+            "duration": 0,
+            "thumbnail_url": "",
+            "submitted_at": None,
+            "raw_metadata": {},
+            "creator": {"username": "unknown"},
+        }
+
     if story is None:
         warning(f"story_share message {msg.id} has no story_share attribute")
         return None
@@ -126,6 +154,9 @@ def extract_reel_metadata(
 
     if item_type == "xma_clip":
         return _extract_xma_clip_metadata(msg, thread_id, submitted_by)
+
+    if item_type == "xma_media_share":
+        return _extract_xma_media_share_metadata(msg, thread_id, submitted_by)
 
     content_type = get_content_type(msg)
     if content_type is None:
@@ -293,6 +324,43 @@ def _extract_xma_clip_metadata(msg: DirectMessage, thread_id: str, submitted_by:
         "play_count": 0,
         "duration": 0,
         "thumbnail_url": "",
+        "submitted_at": None,
+        "raw_metadata": {},
+        "creator": {"username": "unknown"},
+    }
+
+
+def _extract_xma_media_share_metadata(msg: DirectMessage, thread_id: str, submitted_by: str) -> dict[str, Any] | None:
+    xma = getattr(msg, "xma_share", None)
+    if xma is None:
+        warning(f"xma_media_share message {msg.id} has no xma_share")
+        return None
+
+    video_url = str(getattr(xma, "video_url", "") or "")
+    code_match = re.search(r"/p/([A-Za-z0-9_-]+)/", video_url)
+    if not code_match:
+        warning(f"xma_media_share {msg.id}: could not extract shortcode from url")
+        return None
+
+    shortcode = code_match.group(1)
+    preview_url = str(getattr(xma, "preview_url", "") or "")
+
+    return {
+        "id": shortcode,  # non-numeric; _enrich_metadata resolves to pk via media_pk_from_code
+        "content_type": "carousel",
+        "dm_thread_id": thread_id,
+        "reel_url": f"https://www.instagram.com/p/{shortcode}/",
+        "creator_username": "unknown",
+        "submitted_by": submitted_by,
+        "caption": "",
+        "audio_name": "",
+        "audio_artist": "",
+        "hashtags": [],
+        "view_count": 0,
+        "like_count": 0,
+        "play_count": 0,
+        "duration": 0,
+        "thumbnail_url": preview_url,
         "submitted_at": None,
         "raw_metadata": {},
         "creator": {"username": "unknown"},
