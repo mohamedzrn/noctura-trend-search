@@ -38,7 +38,19 @@ class Config:
 
     # Notion
     NOTION_TOKEN: str = os.getenv("NOTION_TOKEN", "")
-    NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
+    NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")  # fallback / default DB
+
+    @property
+    def NOTION_CREATOR_DBS(self) -> dict[str, str]:
+        """Maps Instagram username (lowercase) → Notion database ID for per-creator routing."""
+        import json
+        raw = os.getenv("NOTION_CREATOR_DBS", "")
+        if not raw:
+            return {}
+        try:
+            return {k.lower().lstrip("@"): v for k, v in json.loads(raw).items()}
+        except Exception:
+            return {}
 
     @property
     def NOTION_CREATOR_DBS(self) -> dict[str, str]:
