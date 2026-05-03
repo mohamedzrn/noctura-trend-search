@@ -159,10 +159,9 @@ class Database:
                     profile_pic_url = COALESCE(:profile_pic_url, profile_pic_url),
                     last_seen_at    = :last_seen_at,
                     total_reels     = total_reels + 1
-                WHERE username = ?
+                WHERE username = :username
                 """,
                 {**creator, "last_seen_at": _now()},
-                (username,),
             )
         else:
             self._conn.execute(
@@ -224,6 +223,18 @@ class Database:
             return True
         except sqlite3.IntegrityError:
             return False
+
+    def get_sender_reel_count(self, submitted_by: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM reels WHERE submitted_by = ?", (submitted_by,)
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_creator_reel_count(self, creator_username: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM reels WHERE creator_username = ?", (creator_username,)
+        ).fetchone()
+        return row[0] if row else 0
 
     def reel_exists(self, reel_id: str) -> bool:
         row = self._conn.execute(
