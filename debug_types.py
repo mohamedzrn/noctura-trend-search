@@ -26,3 +26,8 @@ for thread in threads:
                 media_type = getattr(val, "media_type", None)
                 break
         print(f"  msg {msg.id} | type={item_type} | user={user_id} | media_type={media_type} | {', '.join(media_attrs) or 'no media attrs'}")
+        if item_type in ("xma_media_share", "xma_story_share"):
+            xma = getattr(msg, "xma_share", None)
+            if xma:
+                for field in ("pk", "id", "shortcode", "target_url", "preview_url", "video_url", "media_type"):
+                    print(f"    xma.{field} = {getattr(xma, field, 'N/A')}")
