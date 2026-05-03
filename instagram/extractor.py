@@ -14,18 +14,22 @@ from utils.logger import warning
 
 _REEL_TYPES   = {"clip", "reel_share", "xma_reel_share", "xma_clip"}
 _SHARE_TYPES  = {"media_share"}
-_IGNORE_TYPES = {"like", "action_log", "story_share", "raven_media", "felix_share", "text"}
+_STORY_TYPES  = {"story_share"}
+_IGNORE_TYPES = {"like", "action_log", "raven_media", "felix_share", "text"}
 
 
 def get_content_type(msg: DirectMessage) -> str | None:
     """
-    Returns 'reel', 'carousel', 'photo', or None.
+    Returns 'reel', 'carousel', 'photo', 'story', or None.
     None means unsupported / should be ignored or flagged.
     """
     item_type = getattr(msg, "item_type", "") or ""
 
     if item_type in _REEL_TYPES:
         return "reel"
+
+    if item_type in _STORY_TYPES:
+        return "story"
 
     if item_type in _SHARE_TYPES:
         media = _resolve_media(msg)
@@ -55,6 +59,58 @@ def is_wrong_type_message(msg: DirectMessage) -> bool:
     """True when the sender clearly sent something but it's not a supported type."""
     item_type = getattr(msg, "item_type", "") or ""
     return item_type not in _IGNORE_TYPES and item_type != "" and get_content_type(msg) is None
+
+
+def extract_story_metadata(
+    msg: DirectMessage,
+    thread_id: str,
+    submitted_by: str,
+) -> dict[str, Any] | None:
+    """Extract metadata from a story_share DM message."""
+    story = getattr(msg, "story_share", None)
+    if story is None:
+        warning(f"story_share message {msg.id} has no story_share attribute")
+        return None
+
+    story_id = str(getattr(story, "pk", "") or getattr(story, "id", "") or msg.id)
+    creator_user = getattr(story, "user", None)
+    creator_username = getattr(creator_user, "username", "unknown") if creator_user else "unknown"
+
+    thumbnail_url = ""
+    iv = getattr(story, "image_versions2", None)
+    if iv:
+        candidates = getattr(iv, "candidates", None) or []
+        if candidates:
+            thumbnail_url = str(getattr(candidates[0], "url", "") or "")
+
+    return {
+        "id": story_id,
+        "content_type": "story",
+        "dm_thread_id": thread_id,
+        "reel_url": None,
+        "creator_username": creator_username,
+        "submitted_by": submitted_by,
+        "caption": (getattr(story, "caption_text", None) or "").strip(),
+        "audio_name": "",
+        "audio_artist": "",
+        "hashtags": [],
+        "view_count": 0,
+        "like_count": 0,
+        "play_count": 0,
+        "duration": getattr(story, "video_duration", None) or 0,
+        "thumbnail_url": thumbnail_url,
+        "submitted_at": None,
+        "raw_metadata": {},
+        "creator": {
+            "username": creator_username,
+            "full_name": getattr(creator_user, "full_name", None) if creator_user else None,
+            "bio": None,
+            "follower_count": None,
+            "following_count": None,
+            "media_count": None,
+            "profile_pic_url": str(getattr(creator_user, "profile_pic_url", None) or "") if creator_user else "",
+        },
+    }
 
 
 def extract_reel_metadata(
@@ -100,6 +156,7 @@ def extract_reel_metadata(
         "like_count": getattr(media, "like_count", None) or 0,
         "play_count": getattr(media, "play_count", None) or 0,
         "duration": getattr(media, "video_duration", None) or 0,
+        "thumbnail_url": _get_thumbnail_url(media),
         "submitted_at": None,
         "raw_metadata": _safe_media_dict(media),
         "creator": creator,
@@ -170,6 +227,33 @@ def _get_audio(media: Media) -> tuple[str, str]:
     return "", ""
 
 
+def _get_thumbnail_url(media: Media) -> str:
+    # Reels/videos
+    thumb = getattr(media, "thumbnail_url", None)
+    if thumb:
+        return str(thumb)
+    # Photos and carousels
+    iv = getattr(media, "image_versions2", None)
+    if iv:
+        candidates = getattr(iv, "candidates", None) or []
+        if candidates:
+            url = getattr(candidates[0], "url", None)
+            if url:
+                return str(url)
+    # First carousel item
+    resources = getattr(media, "resources", None) or []
+    if resources:
+        first = resources[0]
+        iv = getattr(first, "image_versions2", None)
+        if iv:
+            candidates = getattr(iv, "candidates", None) or []
+            if candidates:
+                url = getattr(candidates[0], "url", None)
+                if url:
+                    return str(url)
+    return ""
+
+
 def _build_url(media: Media) -> str:
     code = getattr(media, "code", None)
     if code:
@@ -208,6 +292,7 @@ def _extract_xma_clip_metadata(msg: DirectMessage, thread_id: str, submitted_by:
         "like_count": 0,
         "play_count": 0,
         "duration": 0,
+        "thumbnail_url": "",
         "submitted_at": None,
         "raw_metadata": {},
         "creator": {"username": "unknown"},

@@ -1,5 +1,8 @@
 """
-Syncs logged reels to a Notion database.
+Syncs logged content to per-creator Notion databases.
+
+Routing: each submission goes to the database mapped to the submitter's
+Instagram username in NOTION_CREATOR_DBS. Falls back to NOTION_DATABASE_ID.
 """
 
 from __future__ import annotations
@@ -21,30 +24,99 @@ class NotionSync:
             "Notion-Version": _NOTION_VERSION,
             "Content-Type": "application/json",
         }
-        self._db_id = config.NOTION_DATABASE_ID
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
     def sync_reel(self, metadata: dict[str, Any]) -> bool:
-        if not config.NOTION_TOKEN or not config.NOTION_DATABASE_ID:
+        if not config.NOTION_TOKEN:
+            return False
+        db_id = self._db_for(metadata.get("submitted_by", ""))
+        if not db_id:
+            warning("Notion: no database ID configured — skipping sync")
             return False
         try:
+            thumbnail = metadata.get("thumbnail_url") or ""
+            page: dict[str, Any] = {
+                "parent": {"database_id": db_id},
+                "properties": _build_properties(metadata),
+            }
+            if thumbnail:
+                page["cover"] = {"type": "external", "external": {"url": thumbnail}}
+
             r = httpx.post(
                 "https://api.notion.com/v1/pages",
                 headers=self._headers,
-                json={
-                    "parent": {"database_id": self._db_id},
-                    "properties": _build_properties(metadata),
-                },
+                json=page,
                 timeout=10,
             )
             if r.status_code == 200:
-                success(f"Notion: synced reel {metadata.get('id')}")
+                success(f"Notion: synced {metadata.get('content_type', 'reel')} {metadata.get('id')}")
                 return True
-            warning(f"Notion sync failed: {r.text[:200]}")
+            warning(f"Notion sync failed ({r.status_code}): {r.text[:200]}")
             return False
         except Exception as exc:
             warning(f"Notion sync error: {exc}")
             return False
 
+    def sync_story(self, metadata: dict[str, Any]) -> bool:
+        if not config.NOTION_TOKEN:
+            return False
+        db_id = self._db_for(metadata.get("submitted_by", ""))
+        if not db_id:
+            warning("Notion: no database ID configured — skipping story sync")
+            return False
+        try:
+            thumbnail = metadata.get("thumbnail_url") or ""
+            local_path = metadata.get("local_path") or ""
+            creator = metadata.get("creator_username") or "unknown"
+            submitted_by = metadata.get("submitted_by") or ""
+
+            properties = {
+                "Name": {"title": [{"text": {"content": f"Story by @{creator}"}}]},
+                "Creator": {"select": {"name": creator}},
+                "Submitted By": {"select": {"name": submitted_by}},
+                "Content Type": {"select": {"name": "story"}},
+                "Caption": _rich_text((metadata.get("caption") or "")[:2000]),
+                "Local Path": _rich_text(local_path[:2000]),
+            }
+
+            page: dict[str, Any] = {
+                "parent": {"database_id": db_id},
+                "properties": properties,
+            }
+            if thumbnail:
+                page["cover"] = {"type": "external", "external": {"url": thumbnail}}
+
+            r = httpx.post(
+                "https://api.notion.com/v1/pages",
+                headers=self._headers,
+                json=page,
+                timeout=10,
+            )
+            if r.status_code == 200:
+                success(f"Notion: synced story {metadata.get('id')}")
+                return True
+            warning(f"Notion story sync failed ({r.status_code}): {r.text[:200]}")
+            return False
+        except Exception as exc:
+            warning(f"Notion story sync error: {exc}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Routing
+    # ------------------------------------------------------------------
+
+    def _db_for(self, submitted_by: str) -> str:
+        username = (submitted_by or "").lower().lstrip("@")
+        creator_dbs = config.NOTION_CREATOR_DBS
+        return creator_dbs.get(username) or config.NOTION_DATABASE_ID
+
+
+# ------------------------------------------------------------------
+# Property builders
+# ------------------------------------------------------------------
 
 def _build_properties(metadata: dict[str, Any]) -> dict:
     hashtags = ", ".join(f"#{h}" for h in (metadata.get("hashtags") or []))
@@ -52,19 +124,22 @@ def _build_properties(metadata: dict[str, Any]) -> dict:
     if metadata.get("audio_artist"):
         audio += f" — {metadata['audio_artist']}"
     creator = metadata.get("creator_username") or "unknown"
+    submitted_by = metadata.get("submitted_by") or ""
+    content_type = metadata.get("content_type") or "reel"
 
     return {
-        "Name":         {"title": [{"text": {"content": f"@{creator}"}}]},
-        "Reel URL":     {"url": metadata.get("reel_url") or None},
-        "Creator":      _rich_text(creator),
-        "Caption":      _rich_text((metadata.get("caption") or "")[:2000]),
-        "Hashtags":     _rich_text(hashtags[:2000]),
-        "Audio":        _rich_text(audio),
-        "Views":        {"number": metadata.get("view_count") or 0},
-        "Likes":        {"number": metadata.get("like_count") or 0},
-        "Plays":        {"number": metadata.get("play_count") or 0},
-        "Duration (s)": {"number": metadata.get("duration") or 0},
-        "Submitted By": _rich_text(metadata.get("submitted_by") or ""),
+        "Name":           {"title": [{"text": {"content": f"@{creator}"}}]},
+        "Reel URL":       {"url": metadata.get("reel_url") or None},
+        "Creator":        {"select": {"name": creator}},
+        "Submitted By":   {"select": {"name": submitted_by}} if submitted_by else _rich_text(""),
+        "Content Type":   {"select": {"name": content_type}},
+        "Caption":        _rich_text((metadata.get("caption") or "")[:2000]),
+        "Hashtags":       _rich_text(hashtags[:2000]),
+        "Audio":          _rich_text(audio),
+        "Views":          {"number": metadata.get("view_count") or 0},
+        "Likes":          {"number": metadata.get("like_count") or 0},
+        "Plays":          {"number": metadata.get("play_count") or 0},
+        "Duration (s)":   {"number": metadata.get("duration") or 0},
     }
 
 
