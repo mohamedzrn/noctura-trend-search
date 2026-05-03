@@ -40,6 +40,15 @@ class Config:
     NOTION_TOKEN: str = os.getenv("NOTION_TOKEN", "")
     NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
 
+    @property
+    def NOTION_CREATOR_DBS(self) -> dict[str, str]:
+        import json
+        raw = os.getenv("NOTION_CREATOR_DBS", "{}")
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+
     # Storage
     DB_PATH: str = os.getenv("DB_PATH", "trends.db")
 
