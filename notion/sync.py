@@ -69,7 +69,6 @@ class NotionSync:
             return False
         try:
             thumbnail = metadata.get("thumbnail_url") or ""
-            local_path = metadata.get("local_path") or ""
             creator = metadata.get("creator_username") or "unknown"
             submitted_by = metadata.get("submitted_by") or ""
 
@@ -79,7 +78,6 @@ class NotionSync:
                 "Submitted By": {"select": {"name": submitted_by}},
                 "Content Type": {"select": {"name": "story"}},
                 "Caption": _rich_text((metadata.get("caption") or "")[:2000]),
-                "Local Path": _rich_text(local_path[:2000]),
             }
 
             page: dict[str, Any] = {

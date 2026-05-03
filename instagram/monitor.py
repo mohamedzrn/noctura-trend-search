@@ -249,8 +249,6 @@ class Monitor:
         NicheBuilder(self.db).rebuild(creator_username)
 
     def _handle_story_message(self, msg, thread_id: str, sender: str) -> None:
-        import os
-        import tempfile
         from notion.sync import NotionSync
 
         metadata = extract_story_metadata(msg, thread_id, sender)
@@ -269,21 +267,6 @@ class Monitor:
             dim(f"Story {metadata['id']} already in DB.")
             return
 
-        # Try to download story media before it expires
-        local_path = ""
-        story_id = metadata["id"]
-        try:
-            media_dir = os.path.join(os.path.dirname(__file__), "..", "media", "stories")
-            os.makedirs(media_dir, exist_ok=True)
-            downloaded = self.client.raw.story_download(int(story_id), folder=media_dir)
-            if downloaded:
-                local_path = str(downloaded)
-                success(f"Story media saved: {local_path}")
-        except Exception as exc:
-            warning(f"Could not download story {story_id}: {exc}")
-
-        # Sync to Notion with local path for reference
-        metadata["local_path"] = local_path
         NotionSync().sync_story(metadata)
 
         self._send(thread_id, "Story saved.")
