@@ -180,6 +180,13 @@ class Monitor:
         # 2. Enrich
         metadata = self._enrich_metadata(metadata)
 
+        # 3a. Visual summary (AI scan of thumbnail)
+        from analysis.analyzer import TrendAnalyzer as _TA
+        metadata["visual_summary"] = _TA().generate_visual_summary(
+            metadata.get("thumbnail_url") or "",
+            metadata.get("caption") or "",
+        )
+
         creator = metadata.pop("creator", {})
         creator_username = metadata.get("creator_username") or "unknown"
         content_type = metadata.get("content_type", "reel")

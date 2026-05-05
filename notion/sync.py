@@ -131,6 +131,7 @@ def _build_properties(metadata: dict[str, Any]) -> dict:
         "Creator":        {"select": {"name": creator}},
         "Submitted By":   {"select": {"name": submitted_by}} if submitted_by else _rich_text(""),
         "Content Type":   {"select": {"name": content_type}},
+        "Summary":        _rich_text((metadata.get("visual_summary") or "")[:2000]),
         "Caption":        _rich_text((metadata.get("caption") or "")[:2000]),
         "Hashtags":       _rich_text(hashtags[:2000]),
         "Audio":          _rich_text(audio),

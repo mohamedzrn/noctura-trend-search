@@ -31,6 +31,7 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._migrate()
+        self._run_migrations()
 
     # ------------------------------------------------------------------
     # Schema
@@ -137,6 +138,14 @@ class Database:
         )
         self._conn.commit()
 
+    def _run_migrations(self) -> None:
+        for col, definition in [("visual_summary", "TEXT")]:
+            try:
+                self._conn.execute(f"ALTER TABLE reels ADD COLUMN {col} {definition}")
+                self._conn.commit()
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Creators
     # ------------------------------------------------------------------
@@ -205,18 +214,19 @@ class Database:
                     (id, dm_thread_id, reel_url, creator_username, submitted_by,
                      caption, audio_name, audio_artist, hashtags,
                      view_count, like_count, play_count, duration,
-                     submitted_at, raw_metadata)
+                     submitted_at, raw_metadata, visual_summary)
                 VALUES
                     (:id, :dm_thread_id, :reel_url, :creator_username, :submitted_by,
                      :caption, :audio_name, :audio_artist, :hashtags,
                      :view_count, :like_count, :play_count, :duration,
-                     :submitted_at, :raw_metadata)
+                     :submitted_at, :raw_metadata, :visual_summary)
                 """,
                 {
                     **reel,
                     "hashtags": json.dumps(reel.get("hashtags", [])),
                     "raw_metadata": json.dumps(reel.get("raw_metadata", {})),
                     "submitted_at": reel.get("submitted_at") or _now(),
+                    "visual_summary": reel.get("visual_summary") or "",
                 },
             )
             self._conn.commit()

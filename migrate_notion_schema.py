@@ -17,6 +17,7 @@ _PATCH = {
         "Creator":      {"select": {}},
         "Submitted By": {"select": {}},
         "Content Type": {"select": {}},
+        "Summary":      {"rich_text": {}},
     }
 }
 

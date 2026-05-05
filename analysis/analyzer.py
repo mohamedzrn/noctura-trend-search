@@ -5,11 +5,13 @@ Branches analysis prompt based on content type: reel, carousel, or photo.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from typing import Any
 
 import anthropic
+import httpx
 
 from config import config
 from utils.logger import error, warning
@@ -77,9 +79,41 @@ Set trending_audio_score to 0.
 """
 
 
+_SUMMARY_PROMPT = (
+    "Describe what is happening in this video in ONE sentence. "
+    "Focus strictly on the visual content: people, actions, objects, setting, or concept shown. "
+    "Be specific and visual. Under 20 words. Reply with the sentence only."
+)
+
+
 class TrendAnalyzer:
     def __init__(self) -> None:
         self._client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+    def generate_visual_summary(self, thumbnail_url: str, caption: str = "") -> str:
+        if not thumbnail_url:
+            return ""
+        try:
+            resp = httpx.get(thumbnail_url, timeout=10, follow_redirects=True)
+            if resp.status_code != 200:
+                return ""
+            img_b64 = base64.standard_b64encode(resp.content).decode("utf-8")
+            content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+            message = self._client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=60,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": img_b64}},
+                        {"type": "text", "text": _SUMMARY_PROMPT + (f"\nCaption hint: {caption[:100]}" if caption else "")},
+                    ],
+                }],
+            )
+            return message.content[0].text.strip()
+        except Exception as exc:
+            warning(f"Visual summary failed: {exc}")
+            return ""
 
     def analyze(self, media: dict[str, Any]) -> dict[str, Any] | None:
         content_type = media.get("content_type", "reel")
