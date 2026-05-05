@@ -138,7 +138,7 @@ def _build_properties(metadata: dict[str, Any]) -> dict:
         "Views":          {"number": metadata.get("view_count") or 0},
         "Likes":          {"number": metadata.get("like_count") or 0},
         "Plays":          {"number": metadata.get("play_count") or 0},
-        "Duration (s)":   {"number": metadata.get("duration") or 0},
+        "Duration (s)":   {"number": round(metadata.get("duration") or 0, 1)},
     }
 
 
