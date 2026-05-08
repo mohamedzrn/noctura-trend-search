@@ -2,11 +2,12 @@
 DM monitor — polls the bot's Instagram inbox for reels, carousels, and photos.
 
 Adaptive polling: fast when active, backs off to 1 hour when idle.
-Wakes up within 15s if a new message arrives during a long sleep.
+Wakes up within 30s if a new message arrives during a long sleep.
 """
 
 from __future__ import annotations
 
+import random
 import time
 from collections import defaultdict
 
@@ -26,7 +27,7 @@ from utils.logger import dim, error, info, success, warning
 
 
 class Monitor:
-    _MIN_SLEEP     = 15
+    _MIN_SLEEP     = 45
     _MAX_SLEEP     = 3600
     _BACKOFF_FACTOR = 2
 
@@ -63,7 +64,7 @@ class Monitor:
             # Sleep in 15s chunks — wakes up early if new messages arrive
             elapsed = 0
             while elapsed < sleep_secs:
-                chunk = min(15, sleep_secs - elapsed)
+                chunk = min(30, sleep_secs - elapsed)
                 time.sleep(chunk)
                 elapsed += chunk
                 try:
@@ -79,10 +80,10 @@ class Monitor:
 
     def _poll(self) -> bool:
         cl = self.client.raw
-        threads = list(cl.direct_threads(amount=20) or [])
+        threads = list(cl.direct_threads(amount=10) or [])
 
         try:
-            pending = cl.direct_pending_inbox(amount=20) or []
+            pending = cl.direct_pending_inbox(amount=10) or []
             for thread in pending:
                 try:
                     cl.direct_thread_approve(thread.id)
@@ -132,7 +133,6 @@ class Monitor:
 
             # Not on whitelist
             if allowed and sender.lower() not in allowed:
-                self._send(thread_id, "This account is private. If you think you should have access, speak to your team.")
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
@@ -145,9 +145,8 @@ class Monitor:
                 found = True
                 continue
 
-            # Unsupported user-initiated content — respond and skip
+            # Unsupported user-initiated content — skip silently
             if is_wrong_type_message(msg) or item_type in {"text", "felix_share", "voice_media"}:
-                self._send(thread_id, "That's not supported yet — forward reels and/or photos only please.")
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
@@ -201,12 +200,12 @@ class Monitor:
         from notion.sync import NotionSync
         NotionSync().sync_reel(metadata)
 
-        # 5. Send context-aware acknowledgment
+        # 5. Send acknowledgment after a human-paced delay
         prior_count = self.db.get_sender_reel_count(sender) - 1  # -1 since we just saved
         self._session_counts[sender] += 1
         session_count = self._session_counts[sender]
-        ack = _build_ack(prior_count, session_count, creator_username, is_new_creator, content_type)
-        self._send(thread_id, ack)
+        ack = _build_ack(prior_count, content_type)
+        self._send_delayed(thread_id, ack)
 
         # 6. Analyse
         analyzer = TrendAnalyzer()
@@ -234,15 +233,7 @@ class Monitor:
         if keywords:
             self.db.upsert_keywords(keywords, analysis.get("niche") or "", creator_username)
 
-        # 8. Notable signal follow-up
-        audio_score = analysis.get("trending_audio_score") or 0
         niche = analysis.get("niche") or ""
-        if audio_score >= 8 and audio_name and niche:
-            self._send(
-                thread_id,
-                f"Strong trending signal on this one — the audio is moving fast across {niche} content right now."
-            )
-
         success(f"Logged — @{sender} | @{creator_username} | {niche} | {', '.join(keywords[:3])}")
 
         # 9. Rebuild profile
@@ -286,7 +277,7 @@ class Monitor:
         metadata["local_path"] = local_path
         NotionSync().sync_story(metadata)
 
-        self._send(thread_id, "Story saved.")
+        self._send_delayed(thread_id, random.choice(["Got it.", "Noted.", "Saved."]))
         success(f"Story logged — @{sender} | @{creator_username}")
 
     def _enrich_metadata(self, metadata: dict) -> dict:
@@ -342,20 +333,28 @@ class Monitor:
         except Exception as exc:
             warning(f"Could not send message to thread {thread_id}: {exc}")
 
+    def _send_delayed(self, thread_id: str, text: str) -> None:
+        """Send after a randomised human-paced delay (12–50 seconds)."""
+        delay = random.uniform(12, 50)
+        dim(f"Reply queued — sending in {delay:.0f}s")
+        time.sleep(delay)
+        self._send(thread_id, text)
+
 
 # ------------------------------------------------------------------
 # Message builder
 # ------------------------------------------------------------------
 
-def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown", is_new_creator: bool = False, content_type: str = "reel") -> str:
-    label = {"reel": "Reel", "carousel": "Carousel", "photo": "Photo"}.get(content_type, "Content")
-    if prior_count == 0:
-        return "Logged. I'll start building your content profile from here — keep sending reels as you come across them and I'll do the rest."
-    if session_count > 0 and session_count % 5 == 0:
-        return f"Logged {session_count} reels. Your profile is updating."
-    if is_new_creator:
-        return f"New creator logged — @{creator_username} added to your profile."
-    return f"{label} from @{creator_username} has been stored."
+_ACK_POOL = [
+    "Got it.",
+    "Noted.",
+    "Saved.",
+    "Got it.",
+    "Got it.",
+]
+
+def _build_ack(prior_count: int, content_type: str = "reel") -> str:
+    return random.choice(_ACK_POOL)
 
 
 # ------------------------------------------------------------------
