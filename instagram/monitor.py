@@ -27,7 +27,7 @@ from utils.logger import dim, error, info, success, warning
 
 
 class Monitor:
-    _MIN_SLEEP     = 15
+    _MIN_SLEEP     = 45
     _MAX_SLEEP     = 3600
     _BACKOFF_FACTOR = 2
 
@@ -49,8 +49,7 @@ class Monitor:
         while True:
             try:
                 found = self._poll()
-                base = self._MIN_SLEEP + random.randint(0, 20)
-                sleep_secs = base if found else min(sleep_secs * self._BACKOFF_FACTOR, self._MAX_SLEEP)
+                sleep_secs = self._MIN_SLEEP if found else min(sleep_secs * self._BACKOFF_FACTOR, self._MAX_SLEEP)
             except LoginRequired:
                 warning("Session expired. Re-logging in …")
                 self.client.login()
@@ -65,7 +64,7 @@ class Monitor:
             # Sleep in 15s chunks — wakes up early if new messages arrive
             elapsed = 0
             while elapsed < sleep_secs:
-                chunk = min(15, sleep_secs - elapsed)
+                chunk = min(30, sleep_secs - elapsed)
                 time.sleep(chunk)
                 elapsed += chunk
                 try:
@@ -81,7 +80,7 @@ class Monitor:
 
     def _poll(self) -> bool:
         cl = self.client.raw
-        threads = list(cl.direct_threads(amount=20) or [])
+        threads = list(cl.direct_threads(amount=10) or [])
 
         try:
             pending = cl.direct_pending_inbox(amount=20) or []
@@ -146,9 +145,8 @@ class Monitor:
                 found = True
                 continue
 
-            # Unsupported user-initiated content — respond and skip
+            # Unsupported user-initiated content — silent drop
             if is_wrong_type_message(msg) or item_type in {"text", "felix_share", "voice_media"}:
-                self._send(thread_id, random.choice(_UNSUPPORTED_MSGS))
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
@@ -324,7 +322,7 @@ class Monitor:
         return False
 
     def _send(self, thread_id: str, text: str) -> None:
-        time.sleep(random.uniform(4, 15))
+        time.sleep(random.uniform(12, 50))
         try:
             self.client.raw.direct_send(text, thread_ids=[thread_id])
         except Exception as exc:
