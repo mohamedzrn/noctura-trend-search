@@ -7,6 +7,7 @@ Wakes up within 15s if a new message arrives during a long sleep.
 
 from __future__ import annotations
 
+import random
 import time
 from collections import defaultdict
 
@@ -48,7 +49,8 @@ class Monitor:
         while True:
             try:
                 found = self._poll()
-                sleep_secs = self._MIN_SLEEP if found else min(sleep_secs * self._BACKOFF_FACTOR, self._MAX_SLEEP)
+                base = self._MIN_SLEEP + random.randint(0, 20)
+                sleep_secs = base if found else min(sleep_secs * self._BACKOFF_FACTOR, self._MAX_SLEEP)
             except LoginRequired:
                 warning("Session expired. Re-logging in …")
                 self.client.login()
@@ -130,9 +132,8 @@ class Monitor:
 
             allowed = config.ALLOWED_SENDERS
 
-            # Not on whitelist
+            # Not on whitelist — silent drop, no reply
             if allowed and sender.lower() not in allowed:
-                self._send(thread_id, "This account is private. If you think you should have access, speak to your team.")
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
@@ -147,7 +148,7 @@ class Monitor:
 
             # Unsupported user-initiated content — respond and skip
             if is_wrong_type_message(msg) or item_type in {"text", "felix_share", "voice_media"}:
-                self._send(thread_id, "That's not supported yet — forward reels and/or photos only please.")
+                self._send(thread_id, random.choice(_UNSUPPORTED_MSGS))
                 self.db.mark_message_processed(msg_id, thread_id)
                 continue
 
@@ -241,15 +242,7 @@ class Monitor:
         if keywords:
             self.db.upsert_keywords(keywords, analysis.get("niche") or "", creator_username)
 
-        # 8. Notable signal follow-up
-        audio_score = analysis.get("trending_audio_score") or 0
         niche = analysis.get("niche") or ""
-        if audio_score >= 8 and audio_name and niche:
-            self._send(
-                thread_id,
-                f"Strong trending signal on this one — the audio is moving fast across {niche} content right now."
-            )
-
         success(f"Logged — @{sender} | @{creator_username} | {niche} | {', '.join(keywords[:3])}")
 
         # 9. Rebuild profile
@@ -276,7 +269,7 @@ class Monitor:
 
         NotionSync().sync_story(metadata)
 
-        self._send(thread_id, "Story saved.")
+        self._send(thread_id, random.choice(_STORY_MSGS))
         success(f"Story logged — @{sender} | @{creator_username}")
 
     def _enrich_metadata(self, metadata: dict) -> dict:
@@ -331,6 +324,7 @@ class Monitor:
         return False
 
     def _send(self, thread_id: str, text: str) -> None:
+        time.sleep(random.uniform(4, 15))
         try:
             self.client.raw.direct_send(text, thread_ids=[thread_id])
         except Exception as exc:
@@ -338,18 +332,63 @@ class Monitor:
 
 
 # ------------------------------------------------------------------
-# Message builder
+# Message pools — varied to avoid pattern detection
 # ------------------------------------------------------------------
 
+_FIRST_TIME_MSGS = [
+    "Got it, saved.",
+    "Noted.",
+    "Saved this one.",
+    "On it.",
+    "Done.",
+]
+
+_MILESTONE_MSGS = [
+    "All saved.",
+    "Got all of those.",
+    "Keep them coming.",
+    "All good.",
+]
+
+_NEW_CREATOR_MSGS = [
+    "Saved — added @{creator} to the mix.",
+    "Got it — @{creator} is a new one, noted.",
+    "Added @{creator}.",
+    "New one saved — @{creator}.",
+]
+
+_REGULAR_MSGS = [
+    "Saved.",
+    "Got it.",
+    "Done.",
+    "Noted.",
+    "Added.",
+    "Good one.",
+]
+
+_STORY_MSGS = [
+    "Saved.",
+    "Got it.",
+    "Done.",
+    "Noted.",
+]
+
+_UNSUPPORTED_MSGS = [
+    "Send me a reel or post instead.",
+    "Can only take reels and posts — try one of those.",
+    "Only reels and posts for now.",
+    "Forward a reel or post and I'll grab it.",
+]
+
+
 def _build_ack(prior_count: int, session_count: int, creator_username: str = "unknown", is_new_creator: bool = False, content_type: str = "reel") -> str:
-    label = {"reel": "Reel", "carousel": "Carousel", "photo": "Photo"}.get(content_type, "Content")
     if prior_count == 0:
-        return "Logged. I'll start building your content profile from here — keep sending reels as you come across them and I'll do the rest."
+        return random.choice(_FIRST_TIME_MSGS)
     if session_count > 0 and session_count % 5 == 0:
-        return f"Logged {session_count} reels. Your profile is updating."
+        return random.choice(_MILESTONE_MSGS)
     if is_new_creator:
-        return f"New creator logged — @{creator_username} added to your profile."
-    return f"{label} from @{creator_username} has been stored."
+        return random.choice(_NEW_CREATOR_MSGS).format(creator=creator_username)
+    return random.choice(_REGULAR_MSGS)
 
 
 # ------------------------------------------------------------------
