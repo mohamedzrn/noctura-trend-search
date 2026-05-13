@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m ' *)",
+      "Bash(Test-Path \"C:\\\\Moh's Files\\\\Claude Outputs\")",
+      "Read(//c/Moh's Files/Claude Outputs/**)"
+    ]
+  }
+}
